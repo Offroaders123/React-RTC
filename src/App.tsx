@@ -79,17 +79,20 @@ export default function App(): ReactNode {
           type: "offer",
           sdp: offer.current!.value
         });
+        console.log(desc);
 
         peerConn.current.addEventListener("icecandidate",event => {
           if (event.candidate) return;
           answer.current!.focus();
           answer.current!.value = peerConn.current.localDescription?.sdp ?? "";
           answer.current!.select();
+          console.log(peerConn.current.localDescription?.sdp);
         });
 
         try {
           await peerConn.current.setRemoteDescription(desc);
           const descr = await peerConn.current.createAnswer();
+          console.log(descr);
           peerConn.current.setLocalDescription(descr);
         } catch (error){
           sendMessage(`${error}`);
