@@ -1,59 +1,68 @@
 // import * as adapter from "webrtc-adapter";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { ReactNode, RefObject } from "react";
+import type { ReactNode } from "react";
 
 export default function App(): ReactNode {
-  const dataChann = useRef<RTCDataChannel>(null);
+  const [disabled,setDisabled] = useState(false);
+  const [dataChann,setDataChann] = useState<RTCDataChannel>();
+  const [messages,setMessages] = useState<readonly ReactNode[]>([]);
+
   const v1 = useRef<HTMLVideoElement>(null);
   const v2 = useRef<HTMLVideoElement>(null);
-  const button = useRef<HTMLButtonElement>(null);
   const offer = useRef<HTMLTextAreaElement>(null);
   const answer = useRef<HTMLTextAreaElement>(null);
-  const div = useRef<HTMLDivElement>(null);
   const chat = useRef<HTMLInputElement>(null);
+  const peerConn = useRef(new RTCPeerConnection({
+    iceServers: [{
+      urls: "stun:stun.l.google.com:19302"
+    }]
+  }));
+  const requestMedia = useRef<MediaStream>();
 
-  function dataChannInit(dataChann: RTCDataChannel): void {
-    dataChann.addEventListener("open",() => {
+  const dataChannInit = useCallback(() => {
+    dataChann?.addEventListener("open",() => {
       sendMessage("Chat!");
     });
-    dataChann.addEventListener("message",event => {
+    dataChann?.addEventListener("message",event => {
       sendMessage(event.data);
     });
-  }
+  },[]);
 
-  function createOffer(button: RefObject<HTMLButtonElement>, peerConn: RefObject<RTCPeerConnection>): void {
-    button.current!.disabled = true;
-    dataChannInit(dataChann.current = peerConn.current!.createDataChannel("chat"));
-  }
+  const createOffer = useCallback(() => {
+    setDisabled(true);
 
-  function sendMessage(msg: ReactNode): void {
-    div.current!.innerHTML += `<p>${msg}</p>`;
-  }
+    setDataChann(peerConn.current.createDataChannel("chat"))
+    dataChannInit();
+
+    peerConn.current.createOffer();
+    peerConn.current.setLocalDescription(void 0);
+    peerConn.current.addEventListener("icecandidate",event => {
+      if (event.candidate) return;
+      offer.current!.value = peerConn.current.localDescription?.sdp ?? "";
+      offer.current!.select();
+      answer.current!.placeholder = "Paste answer here";
+    });
+  },[]);
+
+  const sendMessage = useCallback((msg: ReactNode) => {
+    setMessages([...messages,msg]);
+  },[]);
 
   useEffect(() => {
-    const peerConn = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:stun.l.google.com:19302"
-        }
-      ]
-    });
-
-    peerConn.addEventListener("addstream",event => {
-      v2.current.srcObject = event.stream;
-    });
-    peerConn.addEventListener("datachannel",event => {
-      dataChannInit(dataChann = event.channel);
-    });
-    peerConn.addEventListener("iceconnectionstatechange",() => {
-      sendMessage(peerConn.iceConnectionState);
-    });
-
-    const requestMedia = navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true
-    }).then(stream => peerConn.addStream(v1.current.srcObject = stream)).catch(sendMessage);
+    (async () => {
+      try {
+        const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        peerConn.current.addStream(v1.current!.srcObject = stream);
+        requestMedia.current = stream;
+      } catch (error){
+        sendMessage(`${error}`);
+        throw error;
+      }
+    })();
   },[]);
 
   return (
@@ -61,15 +70,56 @@ export default function App(): ReactNode {
       <video id="v1" ref={v1} height="120" width="160" autoPlay muted/>
       <video id="v2" ref={v2} height="120" width="160" autoPlay/>
       <br/>
-      <button id="button" ref={button} onClick={createOffer}>Offer:</button>
-      <textarea id="offer" ref={offer} placeholder="Paste offer here"/>
+      <button id="button" disabled={disabled} onClick={createOffer}>Offer:</button>
+      <textarea id="offer" ref={offer} placeholder="Paste offer here" disabled={disabled} onKeyDown={async event => {
+        if (event.key !== "Enter" || peerConn.current.signalingState !== "stable") return;
+        setDisabled(true);
+
+        const desc = new RTCSessionDescription({
+          type: "offer",
+          sdp: offer.current!.value
+        });
+
+        peerConn.current.addEventListener("icecandidate",event => {
+          if (event.candidate) return;
+          answer.current!.focus();
+          answer.current!.value = peerConn.current.localDescription?.sdp ?? "";
+          answer.current!.select();
+        });
+
+        try {
+          await peerConn.current.setRemoteDescription(desc);
+          const descr = await peerConn.current.createAnswer();
+          peerConn.current.setLocalDescription(descr);
+        } catch (error){
+          sendMessage(`${error}`);
+          throw error;
+        }
+      }}/>
       <br/>
       Answer:
-      <textarea id="answer" ref={answer}/>
+      <textarea id="answer" ref={answer} onKeyDown={async event => {
+        if (event.key !== "Enter" || peerConn.current.signalingState !== "have-local-offer") return;
+        answer.current!.disabled = true;
+        try {
+          await peerConn.current.setRemoteDescription(new RTCSessionDescription({
+            type: "answer",
+            sdp: answer.current!.value
+          }));
+        } catch (error){
+          sendMessage(`${error}`);
+          throw error;
+        }
+      }}/>
       <br/>
-      <div id="div" ref={div}/>
+      <div id="div">
+        {messages.map((msg,i) => <p id={`message#${i}`}>{msg}</p>)}
+      </div>
       Chat:
-      <input id="chat" ref={chat}/>
+      <input id="chat" ref={chat} onKeyDown={event => {
+        if (event.key !== "Enter") return;
+        dataChann!.send(chat.current!.value);
+      }}/>
       <br/>
     </>
   );
