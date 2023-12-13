@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<meta name="color-scheme" content="light dark">
+<style>
+  video {
+    width: 50%;
+  }
+</style>
+<video id="input" autoplay></video>
+<video id="output" autoplay></video>
+<script type="module">
+//// @ts-check
+
+/** @type {HTMLVideoElement} */
+const inputVideo = document.querySelector("#input");
+/** @type {HTMLVideoElement} */
+const outputVideo = document.querySelector("#input");
+
+const inputStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+inputVideo.srcObject = inputStream;
+
+/** @type {RTCConfiguration} */
+const configuration = {
+  iceServers: [
+    {
+      urls: "stun:stun.l.google.com:19302"
+    }
+  ]
+};
+
+const clientConnection = new RTCPeerConnection(configuration);
+console.log(clientConnection);
+const offer = await makeCall(clientConnection);
+console.log(offer);
+const peerConnection = await makeResponse(offer);
+console.log(peerConnection);
+
+clientConnection.addEventListener("icecandidate",async event => {
+  if (event.candidate === null) return;
+  await peerConnection.addIceCandidate(event.candidate);
+});
+
+clientConnection.addEventListener("connectionstatechange",() => {
+  if (clientConnection.connectionState !== "connected") return;
+  console.log("Peers connected!");
+});
+
+/**
+ * @param {RTCPeerConnection} clientConnection
+*/
+async function makeCall(clientConnection){
+  const offer = await clientConnection.createOffer();
+  await clientConnection.setLocalDescription(offer);
+  return offer;
+}
+
+/**
+ * @param {RTCSessionDescriptionInit} offer
+*/
+async function makeResponse(offer){
+  const peerConnection = new RTCPeerConnection(configuration);
+  peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+  return peerConnection;
+}
+</script>
